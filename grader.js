@@ -46,6 +46,9 @@ var HTMLFILE_DEFAULT = "index.html";
 
 var CHECKSFILE_DEFAULT = "checks.json";
 
+var rest = require('restler');
+
+
 
 var assertFileExists = function(infile){
 
@@ -102,6 +105,32 @@ var clone = function(fn){
     return fn.bind({});
 };
 
+var cheerioUrlFile = function(urlfile){
+
+    return cheerio.load(urlfile);
+
+};
+
+var response2result = function(result){
+
+    $ = cheerioUrlFile(result);
+
+    var checks = loadChecks(program.checks).sort();
+
+    var out = {};
+
+    for(var ii in checks){
+
+	var present = $(checks[ii]).length > 0;
+
+	out[checks[ii]] = present;
+
+    }
+
+    return out;
+
+};
+
 if(require.main == module){
 
     program
@@ -114,13 +143,24 @@ if(require.main == module){
 
 		HTMLFILE_DEFAULT)
 
+	.option('--url <url>', 'Add URL')
+
 	.parse(process.argv);
 
-    var checkJson = checkHtmlFile(program.file, program.checks);
+    if(program.file){
 
-    var outJson = JSON.stringify(checkJson, null, 4);
+	var checkJson = checkHtmlFile(program.file, program.checks);
 
-    console.log(outJson);
+	var outJson = JSON.stringify(checkJson, null, 4);
+
+	console.log(outJson);
+
+    }
+    else if(program.url){
+
+	rest.get(program.url).on('complete', response2result);
+
+    }
 
 } else {
 

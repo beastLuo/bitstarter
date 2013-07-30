@@ -1,0 +1,187 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+    <title>WebServer Test</title>
+    <script type="text/javascript" src="http://ajax.aspnetcdn.com/ajax/jquery/jquery-1.9.1.min.js"></script>
+    <script type="text/javascript">
+        var httpRoot = "http://localhost:8181/kinect/default/";
+        var socketRoot = "ws://localhost:8181/kinect/default/";
+
+        // Enable cross-site scripting support
+        jQuery.support.cors = true;
+
+        function ajaxGet(requestUrl, successFunction) {
+            $.ajax({
+                url: requestUrl,
+                success: successFunction,
+                error: function (jqxhr, status, errorThrown) {
+                    console.log(status);
+                },
+                cache: false,
+                crossDomain: true
+            });
+        }
+
+        //////////////////////////////////////////////////////////////
+        // SocketExec object constructor
+        function SocketExec(uriSubpath, invocationTarget) {
+
+            //////////////////////////////////////////////////////////////
+            // Private SocketExec properties
+            var target = invocationTarget;
+            var statusElement = null;
+            var statusMessage = "";
+            var debugElement = null;
+            var numMessages = 0;
+            var socket = null;
+            var isStarted = false;
+
+            //////////////////////////////////////////////////////////////
+            // Private SocketExec methods
+            function updateStatusElement() {
+                if (statusElement != null) {
+                    $(statusElement).html(statusMessage);
+                }
+            }
+
+            function updateStatus(message) {
+                statusMessage = message;
+                updateStatusElement();
+            }
+
+            function tryConnection(socketExec) {
+                if (!isStarted) {
+                    return;
+                }
+
+                if (socket != null) {
+                    updateStatus("Already connected." + (new Date()).toTimeString());
+                    return;
+                }
+                updateStatus("Connecting to server...");
+
+                // Initialize a new web socket.
+                socket = new WebSocket(socketRoot + uriSubpath);
+
+                // Connection established.
+                socket.onopen = function () {
+                    updateStatus("Connection successful.");
+                    numMessages = 0;
+                };
+
+                // Connection closed.
+                socket.onclose = function () {
+                    updateStatus("Connection closed.");
+                    if (isStarted) {
+                        // Keep trying to reconnect as long as we're started
+                        setTimeout(tryConnection, 5000, socketExec);
+                    }
+                    socket = null;
+                };
+
+                // Receive data FROM the server!
+                socket.onmessage = function (evt) {
+                    // Get the data in JSON format.
+                    var messageData = JSON.parse(evt.data);
+                    ++numMessages;
+                    updateStatus("Message " + numMessages + " received");
+                    var name = messageData.name;
+                    var func = target[name];
+                    if (typeof (func) == 'function') {
+                        var result = target[name](messageData);
+                        if (result !== undefined) {
+                            socket.send(JSON.stringify(result));
+                        }
+                    } else {
+                        console.log('JavaScript function "' + name + '" could not be found.  No attempt was made to call the function.');
+                    }
+                };
+            }
+
+            //////////////////////////////////////////////////////////////
+            // Public SocketExec properties
+            this.returnValueReplacers = {}; // methods used to replace key-value pairs during JSON.stringify calls before sending a message response to server
+
+            //////////////////////////////////////////////////////////////
+            // Public SocketExec functions
+            this.setStatusElement = function (element) {
+                statusElement = element;
+                updateStatusElement();
+            };
+
+            this.start = function () {
+                isStarted = true;
+
+                tryConnection(this);
+            }
+
+            this.stop = function () {
+                isStarted = false;
+
+                if (socket != null) {
+                    socket.close();
+                }
+            }
+
+            //////////////////////////////////////////////////////////////
+            // SocketExec initialization code
+            if (!window.WebSocket) {
+                updateStatus("Your browser does not support web sockets!");
+                return;
+            }
+        }
+
+        function StreamEventHandler() {
+            var interactionMessageCount = 0;
+            var getInteractionInfoCount = 0;
+
+            this.interaction = function (interactionFrame) {
+                $("#interactionCount").html((++interactionMessageCount).toString());
+                $("#interactionData").html(JSON.stringify(interactionFrame));
+            }
+
+            this.getInteractionInfoAtLocation = function (functionCallData) {
+                $("#interactionInfoCount").html((++getInteractionInfoCount).toString());
+
+                return { "id": functionCallData.id, "result": {"IsPressTarget": false, "IsGripTarget": false}};
+            }
+        }
+
+        $(document).ready(function () {
+            var wasInteractionEnabled = false;
+            ajaxGet(httpRoot + "state", function (data) {
+                $("#getInitialStateResult").text(JSON.stringify(data));
+                wasUserviewerEnabled = data.userviewer.enabled;
+
+                // Toggle interaction enabled state and add a dummy stream to see errors
+                $.post(httpRoot + "state",
+                    JSON.stringify({ "interaction": { "lalala": "parsnip" }, "userviewer": { "enabled": !wasUserviewerEnabled }, "foo": { "nothing": 2 } }),
+                    function (data) {
+                        $("#setStateResult").text(JSON.stringify(data));
+
+                        // Get again to see new state
+                        ajaxGet(httpRoot + "state", function (data) {
+                            $("#getToggledStateResult").text(JSON.stringify(data));
+                        });
+                    });
+            });
+
+            var eventHandler = new StreamEventHandler();
+            var streamSocketExec = new SocketExec("stream", eventHandler);
+            streamSocketExec.start();
+            var interactionClientSocketExec = new SocketExec("interaction/client", eventHandler);
+            interactionClientSocketExec.start();
+        });
+    </script>
+    <style type="text/css">
+    </style>
+</head>
+<body>
+    <div><span>Get initial state result:</span><span id="getInitialStateResult"></span></div>
+    <div><span>Set state result:</span><span id="setStateResult"></span></div>
+    <div><span>Get toggled state result:</span><span id="getToggledStateResult"></span></div>
+    <div><span>Interaction message count:</span><span id="interactionCount"></span></div>
+    <div><span>Interaction message data:</span><span id="interactionData"></span></div>
+    <div><span>Get nteraction info message count:</span><span id="interactionInfoCount"></span></div>
+</body>
+</html>
